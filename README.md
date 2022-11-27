@@ -1,6 +1,7 @@
 ## imaris-linker
 A simple python script for externally linking multiple imaris files. 
 
+![](example.png)
 ### Intro and Basic Usage
 ````
 python imaris_linker.py
