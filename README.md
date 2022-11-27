@@ -14,7 +14,7 @@ python imaris_linker.py
 --color 0 1 0
 ````
 ### Assumptions
-This script assumes imaris files are individua. tiles in a single directory, named as:
+This script assumes imaris files are individual tiles in a single directory, named as:
 ````
 tile_x_####_y_####_z_####_ch_###.ims
 ````
