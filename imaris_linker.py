@@ -77,45 +77,39 @@ def imaris_linker(path, filename, x_tiles, y_tiles, z_tiles, channels, color_ran
     tile=0
 
     # loop over all expected imaris files
-    for c in channels:
+    for c in range(0, len(channels)):
         for z in range(0, z_tiles):
             for y in range(0, y_tiles):
                 for x in range(0, x_tiles):
                     # create input imaris file handle
-                    file_in=h5py.File(f'tile_x_{x:0>4d}_y_{y:0>4d}_z_{z:0>4d}_ch_{c}.ims', 'r')
-                    # copy datasetinfo from input file to combined output file
+                    file_in=h5py.File(f'tile_x_{x:0>4d}_y_{y:0>4d}_z_{z:0>4d}_ch_{channels[c]}.ims', 'r')
+                    # create output file group names based on tile #
                     if tile == 0:
-                        file_in.copy(source='DataSetInfo/Channel 0', dest=file_out, name=f'DataSetInfo/Channel 0')
-                        file_in.copy(source='DataSetInfo/Image', dest=file_out, name=f'DataSetInfo/Image')
-                        file_in.copy(source='DataSetInfo/ImarisDataSet', dest=file_out, name=f'DataSetInfo/ImarisDataSet')
-                        file_in.copy(source='DataSetInfo/Log', dest=file_out, name=f'DataSetInfo/Log')
-                        info=file_out['DataSetInfo/Image']
-                        info.attrs.__delitem__('RecordingDate')
-                        # update color and range for given tile
-                        info=file_out[f'DataSetInfo/Channel 0']
-                        write_string_attribute(info, 'Color', f'{color[0]:.1f} {color[1]:.1f} {color[2]:.1f}')
-                        write_string_attribute(info, 'ColorMode', 'BaseColor')
-                        write_string_attribute(info, 'ColorRange', f'{color_range[0]:.1f} {color_range[1]:.1f}')
-                        # create data group in output file
-                        data=file_out.create_group(f'DataSet')
+                        data_name = 'DataSet'
+                        data_info_name = 'DataSetInfo'
                     else:
-                        file_in.copy(source='DataSetInfo/Channel 0', dest=file_out, name=f'DataSetInfo{tile}/Channel 0')
-                        file_in.copy(source='DataSetInfo/Image', dest=file_out, name=f'DataSetInfo{tile}/Image')
-                        file_in.copy(source='DataSetInfo/ImarisDataSet', dest=file_out, name=f'DataSetInfo{tile}/ImarisDataSet')
-                        file_in.copy(source='DataSetInfo/Log', dest=file_out, name=f'DataSetInfo{tile}/Log')
-                        info=file_out[f'DataSetInfo{tile}/Image']
-                        info.attrs.__delitem__('RecordingDate')
-                        # update color and range for given tile
-                        info=file_out[f'DataSetInfo{tile}/Channel 0']
-                        write_string_attribute(info, 'Color', f'{color[0]:.1f} {color[1]:.1f} {color[2]:.1f}')
-                        write_string_attribute(info, 'ColorMode', 'BaseColor')
-                        write_string_attribute(info, 'ColorRange', f'{color_range[0]:.1f} {color_range[1]:.1f}')
-                        # create data group in output file
-                        data=file_out.create_group(f'DataSet{tile}')
+                        data_name = f'DataSet{tile}'
+                        data_info_name = f'DataSetInfo{tile}'
+                    # copy datasetinfo from input file to combined output file
+                    file_in.copy(source='DataSetInfo/Channel 0', dest=file_out, name=f'{data_info_name}/Channel 0')
+                    file_in.copy(source='DataSetInfo/Image', dest=file_out, name=f'{data_info_name}/Image')
+                    file_in.copy(source='DataSetInfo/ImarisDataSet', dest=file_out, name=f'{data_info_name}/ImarisDataSet')
+                    file_in.copy(source='DataSetInfo/Log', dest=file_out, name=f'{data_info_name}/Log')
+                    info=file_out[f'{data_info_name}/Image']
+                    info.attrs.__delitem__('RecordingDate')
+                    # update color and range for given tile
+                    info=file_out[f'{data_info_name}/Channel 0']
+                    # assume input color list goes r1 g1 b1 r2 g2 b2...
+                    write_string_attribute(info, 'Color', f'{color[0+3*c]:.1f} {color[1+3*c]:.1f} {color[2+3*c]:.1f}')
+                    write_string_attribute(info, 'ColorMode', 'BaseColor')
+                    # assume input color range list goes min1 max1 min2 max2...
+                    write_string_attribute(info, 'ColorRange', f'{color_range[0+2*c]:.1f} {color_range[1+2*c]:.1f}')
+                    # create data group in output file
+                    data=file_out.create_group(data_name)
                     # loop over all resolution levels
                     for r in range(0, len(file_in['DataSet'].keys())):
                         # create hard link within output file to data location in input file
-                        data[f'ResolutionLevel {r}/TimePoint 0/Channel 0']=h5py.ExternalLink(f'./tile_x_{x:0>4d}_y_{y:0>4d}_z_{z:0>4d}_ch_{c}.ims', f'DataSet/ResolutionLevel {r}/TimePoint 0/Channel 0')
+                        data[f'ResolutionLevel {r}/TimePoint 0/Channel 0']=h5py.ExternalLink(f'./tile_x_{x:0>4d}_y_{y:0>4d}_z_{z:0>4d}_ch_{channels[c]}.ims', f'DataSet/ResolutionLevel {r}/TimePoint 0/Channel 0')
                     # close input file handle
                     file_in.close()
                     # increment tile
@@ -150,9 +144,9 @@ if __name__ == "__main__":
         raise TypeError('color range is not a list.')
     if not isinstance(args.color, list):
         raise TypeError('color is not a list.')
-    if len(args.color) != 3:
+    if len(args.color) != 3*len(channels):
         raise ValueError('color must have 3 rgb values.')
-    if len(args.color_range) != 2:
+    if len(args.color_range) != 2*len(channels):
         raise ValueError('color range must have 2 values (min/max).')
     imaris_linker(args.path, args.filename, args.x_tiles, args.y_tiles,
                   args.z_tiles, args.channels, args.color_range, args.color)
