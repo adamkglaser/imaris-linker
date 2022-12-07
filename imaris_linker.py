@@ -2,6 +2,7 @@ import h5py
 import numpy
 import os
 import glob
+from numpy import genfromtxt
 
 def write_numeric_attribute(group, attribute_name, number, dtype):
     """Write numeric attribute to imaris hdf5 file.
@@ -48,7 +49,7 @@ def write_string_attribute(group, attribute_name, string):
     # write numpy string to h5 attribute
     attribute.write(numpy_string, mtype=attribute.get_type())
 
-def imaris_linker(path, filename, x_tiles, y_tiles, z_tiles, channels, color_range, color):
+def imaris_linker(path, filename, x_tiles, y_tiles, z_tiles, channels, color_range, color, color_table):
     """Generated combined imaris file with external links to imaris tile files.
     :param path: directory containing imaris hdf5 tile files.
     :param filename: combined imaris filename.
@@ -99,9 +100,41 @@ def imaris_linker(path, filename, x_tiles, y_tiles, z_tiles, channels, color_ran
                     info.attrs.__delitem__('RecordingDate')
                     # update color and range for given tile
                     info=file_out[f'{data_info_name}/Channel 0']
-                    # assume input color list goes r1 g1 b1 r2 g2 b2...
-                    write_string_attribute(info, 'Color', f'{color[0+3*c]:.1f} {color[1+3*c]:.1f} {color[2+3*c]:.1f}')
-                    write_string_attribute(info, 'ColorMode', 'BaseColor')
+                    if color_table is not None:
+                        # color mode is table
+                        write_string_attribute(info, 'ColorMode', 'TableColor')
+                        # assume entries are dimension 0, rgb is dimension 1
+                        write_string_attribute(info, 'ColorTableLength', f'{color_table.shape[0]}')
+                        # default to opacity as always 1
+                        write_string_attribute(info, 'ColorOpacity', '1.000')
+                        # change to string list each with 3 decimal places
+                        temp_string = ["%.3f" % x for x in color_table.flatten()]
+                        # add space in between entries and convert to single long string
+                        string = ' '.join(temp_string)
+                        # add space at end of string
+                        string = string + ' '
+                        # format string 
+                        # ascii encoded h5 string with length 1
+                        ascii_type=h5py.string_dtype(encoding='ascii', length=1)
+                        # create ascii encoded numpy string
+                        numpy_string=numpy.frombuffer(buffer=string.encode('ascii'), dtype=ascii_type)
+                        # copy of the null-terminated fixed-length string datatype
+                        type_id=h5py.h5t.TypeID.copy(h5py.h5t.C_S1)
+                        # set the total size of the datatype, in bytes.
+                        type_id.set_size(1)
+                        # set the padding type to null-terminated only (c style)
+                        type_id.set_strpad(h5py.h5t.STR_NULLTERM)
+                        # create simple dataspace for numpy string
+                        dataspace=h5py.h5s.create_simple((len(numpy_string),))
+                        # create color table dataset container. name must be in bytes not str
+                        tableid=h5py.h5d.create(loc=info.id, name=b'ColorTable', tid=type_id, space=dataspace)
+                        # write color table string to dataset. not sure why, but dataspace needs to be first two args.
+                        tableid.write(dataspace, dataspace, numpy_string, mtype=tableid.get_type())
+                    else:
+                        # color mode is base
+                        write_string_attribute(info, 'ColorMode', 'BaseColor')
+                        # assume input color list goes r1 g1 b1 r2 g2 b2...
+                        write_string_attribute(info, 'Color', f'{color[0+3*c]:.1f} {color[1+3*c]:.1f} {color[2+3*c]:.1f}')
                     # assume input color range list goes min1 max1 min2 max2...
                     write_string_attribute(info, 'ColorRange', f'{color_range[0+2*c]:.1f} {color_range[1+2*c]:.1f}')
                     # create data group in output file
@@ -127,8 +160,37 @@ if __name__ == "__main__":
     parser.add_argument("--z_tiles", type=int, default=1)
     parser.add_argument("--channels", type=int, nargs='+', default=[488])
     parser.add_argument("--color_range", type=int, nargs='+', default=[0, 1000])
-    parser.add_argument("--color", type=float, nargs='+', default=[0, 1, 1])
+    parser.add_argument("--color", type=float, nargs='+', default=None)
+    parser.add_argument("--color_table", type=str, default=None)
     args = parser.parse_args()
+    
+    if args.x_tiles < 0 or args.y_tiles < 0 or args.z_tiles < 0:
+        raise ValueError('tiles cannot be negative.')
+    if not isinstance(args.channels, list):
+        raise TypeError('channels is not a list.')
+    if not isinstance(args.color_range, list):
+        raise TypeError('color range is not a list.')
+    if args.color and args.color_table:
+        raise ValueError('must choose color or color table, not both.')
+    if args.color and not args.color_table:
+        if not isinstance(args.color, list):
+            raise TypeError('color is not a list.')
+        if len(args.color) != 3*len(args.channels):
+            raise ValueError('color must have 3 rgb values.')
+    if args.color_table and not args.color:
+        if not isinstance(args.color_table, str):
+            raise TypeError('color table is not a string')
+        # check local csv color tables
+        color_tables=glob.glob('*.csv')
+        # if specified color table is not present, raise error
+        if f'{args.color_table}.csv' not in color_tables:
+            raise ValueError('color table not valid, no csv file present.')
+        # read colormap csv file
+        color_table = genfromtxt(f'{args.color_table}.csv', delimiter=',')
+        # normalize to maximum of 1.0
+        color_table = color_table/255.0
+    if len(args.color_range) != 2*len(args.channels):
+        raise ValueError('color range must have 2 values (min/max).')
     os.chdir(args.path)
     # check input values
     files = glob.glob('./*.ims')
@@ -136,17 +198,5 @@ if __name__ == "__main__":
         raise ValueError('no ims files in specified directory.')
     if args.filename in files:
         raise ValueError('output filename is the same as ims file in directory.')
-    if args.x_tiles < 0 or args.y_tiles < 0 or args.z_tiles < 0:
-        raise ValueError('tiles cannot be negative.')
-    if not isinstance(args.channels, list):
-        raise TypeError('channels is not a list.')
-    if not isinstance(args.color_range, list):
-        raise TypeError('color range is not a list.')
-    if not isinstance(args.color, list):
-        raise TypeError('color is not a list.')
-    if len(args.color) != 3*len(channels):
-        raise ValueError('color must have 3 rgb values.')
-    if len(args.color_range) != 2*len(channels):
-        raise ValueError('color range must have 2 values (min/max).')
     imaris_linker(args.path, args.filename, args.x_tiles, args.y_tiles,
-                  args.z_tiles, args.channels, args.color_range, args.color)
+                  args.z_tiles, args.channels, args.color_range, args.color, color_table)
