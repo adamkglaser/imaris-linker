@@ -74,8 +74,14 @@ def imaris_linker(path, filename, x_tiles, y_tiles, z_tiles, channels, color_ran
     write_numeric_attribute(info, 'NumberOfDataSets', x_tiles*y_tiles*z_tiles*len(channels), numpy.uint32)
     write_string_attribute(info, 'ThumbnailDirectoryName', 'Thumbnail')
 
-    # initialize tile counter
+    # initialize variables
     tile=0
+    xmin=float('inf')
+    xmax=float('-inf')
+    ymin=float('inf')
+    ymax=float('-inf')
+    zmin=float('inf')
+    zmax=float('-inf')
 
     # loop over all expected imaris files
     for c in range(0, len(channels)):
@@ -96,7 +102,14 @@ def imaris_linker(path, filename, x_tiles, y_tiles, z_tiles, channels, color_ran
                     file_in.copy(source='DataSetInfo/Image', dest=file_out, name=f'{data_info_name}/Image')
                     file_in.copy(source='DataSetInfo/ImarisDataSet', dest=file_out, name=f'{data_info_name}/ImarisDataSet')
                     file_in.copy(source='DataSetInfo/Log', dest=file_out, name=f'{data_info_name}/Log')
+                    # track max extents
                     info=file_out[f'{data_info_name}/Image']
+                    xmin = min(xmin, float(str(info.attrs.get('ExtMin0'), 'ascii')))
+                    xmax = max(xmax, float(str(info.attrs.get('ExtMax0'), 'ascii')))
+                    ymin = min(ymin, float(str(info.attrs.get('ExtMin1'), 'ascii')))
+                    ymax = max(ymax, float(str(info.attrs.get('ExtMax1'), 'ascii')))
+                    zmin = min(zmin, float(str(info.attrs.get('ExtMin2'), 'ascii')))
+                    zmax = max(zmax, float(str(info.attrs.get('ExtMax2'), 'ascii')))
                     info.attrs.__delitem__('RecordingDate')
                     # update color and range for given tile
                     info=file_out[f'{data_info_name}/Channel 0']
@@ -140,6 +153,7 @@ def imaris_linker(path, filename, x_tiles, y_tiles, z_tiles, channels, color_ran
                     # create data group in output file
                     data=file_out.create_group(data_name)
                     # loop over all resolution levels
+                    num_res = len(file_in['DataSet'].keys())
                     for r in range(0, len(file_in['DataSet'].keys())):
                         # create hard link within output file to data location in input file
                         data[f'ResolutionLevel {r}/TimePoint 0/Channel 0']=h5py.ExternalLink(f'./tile_x_{x:0>4d}_y_{y:0>4d}_z_{z:0>4d}_ch_{channels[c]}.ims', f'DataSet/ResolutionLevel {r}/TimePoint 0/Channel 0')
@@ -147,6 +161,68 @@ def imaris_linker(path, filename, x_tiles, y_tiles, z_tiles, channels, color_ran
                     file_in.close()
                     # increment tile
                     tile += 1
+    # close output file handle
+    file_out.close()
+
+    # create dummy volume with max extents for imaris visualization
+    file_out = h5py.File('dummy.ims','w')
+    # grab handle to file's parent group
+    info=file_out['/']
+    # write required parent metadata attributes
+    write_string_attribute(info, 'DataSetDirectoryName', 'DataSet')
+    write_string_attribute(info, 'DataSetInfoDirectoryName', 'DataSetInfo')
+    write_string_attribute(info, 'ImarisDataSet', 'ImarisDataSet')
+    write_string_attribute(info, 'ImarisVersion', '5.5.0')
+    write_numeric_attribute(info, 'NumberOfDataSets', 1)
+    write_string_attribute(info, 'ThumbnailDirectoryName', 'Thumbnail')
+
+    data_name = f'DataSet'
+    data_info_name = f'DataSetInfo'
+    # write a dummy dataset with 1024 size
+    data = file_out.create_group(data_name)
+    size = 1024
+    dset = file_out.create_dataset(f'{data_name}/ResolutionLevel {r}/TimePoint 0/Channel 0/Data', shape = (size,size,size), chunks = (size,size,size), dtype = 'uint16')
+    info = data[f'ResolutionLevel {r}/TimePoint 0/Channel 0']
+    write_string_attribute(info, 'HistogramMax', '255.00')
+    write_string_attribute(info, 'HistogramMin', '0.00')
+    write_string_attribute(info, 'ImageSizeX', str(size))
+    write_string_attribute(info, 'ImageSizeY', str(size))
+    write_string_attribute(info, 'ImageSizeZ', str(size))
+    # write dataset info channel metadata attributes
+    info = file_out.create_group(f'{data_info_name}/Channel 0')
+    write_string_attribute(info, 'Description','(description not specified)')
+    write_string_attribute(info, 'Name','Dummy Volume')
+    write_string_attribute(info, 'Color','1.000 1.000 1.000')
+    write_string_attribute(info, 'ColorMode','BaseColor')
+    write_string_attribute(info, 'ColorOpacity','1.000')
+    write_string_attribute(info, 'GammaCorrection','1.000')
+    write_string_attribute(info, 'ColorRange','0.000 255.000')
+    # write dataset info image metadata attributes
+    info = file_out.create_group(f'{data_info_name}/Image')
+    write_string_attribute(info,'Description','(description not specified)')
+    write_string_attribute(info, 'ExtMin0', str(xmin))
+    write_string_attribute(info, 'ExtMin1', str(ymin))
+    write_string_attribute(info, 'ExtMin2', str(zmin))
+    write_string_attribute(info, 'ExtMax0', str(xmax))
+    write_string_attribute(info, 'ExtMax1', str(ymax))
+    write_string_attribute(info, 'ExtMax2', str(zmax))
+    write_string_attribute(info,'Name','(name not specified)')
+    write_string_attribute(info,'Unit','um')
+    write_string_attribute(info,'ResampleDimensionX','true')
+    write_string_attribute(info,'ResampleDimensionY','true')
+    write_string_attribute(info,'ResampleDimensionZ','true')
+    write_string_attribute(info,'X',str(1024))
+    write_string_attribute(info,'Y',str(1024))
+    write_string_attribute(info,'Z',str(1024))
+    # write dataset info ims metadata attributes            
+    info = file_out.create_group(f'{data_info_name}/ImarisDataSet')
+    write_string_attribute(info,'Creator','PyImarisWriter')
+    write_string_attribute(info,'NumberOfImages',str(1))
+    write_string_attribute(info,'Version','1.0.0')
+    # write dataset info log metadata attributes
+    info = file_out.create_group(f'{data_info_name}/Log')
+    write_string_attribute(info,'Entries',str(0))
+
     # close output file handle
     file_out.close()
 
@@ -177,6 +253,7 @@ if __name__ == "__main__":
             raise TypeError('color is not a list.')
         if len(args.color) != 3*len(args.channels):
             raise ValueError('color must have 3 rgb values.')
+        color_table = None
     if args.color_table and not args.color:
         if not isinstance(args.color_table, str):
             raise TypeError('color table is not a string')
